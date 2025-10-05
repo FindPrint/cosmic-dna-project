@@ -7,9 +7,9 @@ import camb
 def plot_cosmic_dna_metrics_results(results, validator, mcmc_samples, best_params):
     """Visualisation complète avec métriques supplémentaires"""
     fig, axes = plt.subplots(4, 2, figsize=(18, 24))
-    
+
     colors = {'Monolith': 'blue', 'Crystal': 'green', 'Balanced': 'red', 'MCMC': 'purple', 'IllustrisTNG': 'black'}
-    
+
     # 1. Fonction de corrélation
     ax = axes[0, 0]
     for regime_name, data in results.items():
@@ -27,7 +27,7 @@ def plot_cosmic_dna_metrics_results(results, validator, mcmc_samples, best_param
     ax.set_title('Fonction de Corrélation (Redshift)', fontsize=14)
     ax.legend()
     ax.grid(True, alpha=0.3)
-    
+
     # 2. Spectre de puissance avec CAMB
     ax = axes[0, 1]
     pars = camb.CAMBparams()
@@ -37,7 +37,7 @@ def plot_cosmic_dna_metrics_results(results, validator, mcmc_samples, best_param
     results_camb = camb.get_results(pars)
     k_camb, _, Pk_camb = results_camb.get_matter_power_spectrum(minkh=1e-4, maxkh=1.0, npoints=200)
     ax.loglog(k_camb, Pk_camb[0], 'k--', label='CAMB P(k)', alpha=0.7)
-    
+
     for regime_name, data in results.items():
         if regime_name == 'illustris':
             continue
@@ -49,7 +49,7 @@ def plot_cosmic_dna_metrics_results(results, validator, mcmc_samples, best_param
     ax.set_title('Spectre de Puissance (CAMB)', fontsize=14)
     ax.legend()
     ax.grid(True, alpha=0.3)
-    
+
     # 3. Distribution spatiale
     ax = axes[1, 0]
     for regime_name, data in results.items():
@@ -63,7 +63,7 @@ def plot_cosmic_dna_metrics_results(results, validator, mcmc_samples, best_param
     ax.set_title('Distribution Spatiale (XY)', fontsize=14)
     ax.set_aspect('equal')
     ax.legend()
-    
+
     # 4. Résidus
     ax = axes[1, 1]
     for regime_name, data in results.items():
@@ -80,7 +80,7 @@ def plot_cosmic_dna_metrics_results(results, validator, mcmc_samples, best_param
     ax.set_title('Résidus Normalisés vs SDSS', fontsize=14)
     ax.legend()
     ax.grid(True, alpha=0.3)
-    
+
     # 5. Clustering
     ax = axes[2, 0]
     for regime_name, data in results.items():
@@ -94,7 +94,7 @@ def plot_cosmic_dna_metrics_results(results, validator, mcmc_samples, best_param
     ax.set_title('Distribution des tailles de clusters', fontsize=14)
     ax.legend()
     ax.grid(True, alpha=0.3)
-    
+
     # 6. Distributions MCMC
     ax = axes[2, 1]
     labels = ['α', 'β', 'γ', 'δ', 'ν', 'b', 'c']
@@ -105,7 +105,7 @@ def plot_cosmic_dna_metrics_results(results, validator, mcmc_samples, best_param
     ax.set_title('Distributions MCMC des paramètres', fontsize=14)
     ax.legend()
     ax.grid(True, alpha=0.3)
-    
+
     # 7. Métriques
     ax = axes[3, 0]
     stats_text = "RAPPORT COSMIC DNA:\n\n"
@@ -131,6 +131,6 @@ def plot_cosmic_dna_metrics_results(results, validator, mcmc_samples, best_param
     ax.set_ylim(0, 1)
     ax.set_title('Métriques Cosmic DNA', fontsize=14)
     ax.axis('off')
-    
+
     plt.tight_layout()
     plt.show()
