@@ -1,9 +1,8 @@
-#Voici le code complet, fusionnant toutes les classes et fonctions nécessaires pour le projet Cosmic DNA. Il inclut la génération de catalogues, l'évolution temporelle (Leapfrog), l'optimisation MCMC, la comparaison avec IllustrisTNG, les métriques supplémentaires (rapport vide-amas, périodicité), et les validations contre SDSS. Le code est structuré pour être modulaire et reproductible (seed=42).
+#Voici le code complet, fusionné et corrigé, incluant toutes les fonctionnalités du projet Cosmic DNA : génération de catalogues avec CAMB, évolution temporelle via Leapfrog, optimisation MCMC, comparaison avec IllustrisTNG, et métriques supplémentaires (rapport vide-amas, périodicité). La méthode compute_covariance_matrix est mise à jour pour utiliser 500 rééchantillons bootstrap, avec des messages de progression ajustés pour une exécution robuste.
 
 # src/cosmic_dna_validator.py
 
 import numpy as np
-import matplotlib.pyplot as plt
 from scipy import stats
 from scipy.spatial import cKDTree
 from scipy.interpolate import interp1d
@@ -42,19 +41,11 @@ class RedshiftSpaceValidator:
             
         print(f"🔄 Génération catalogue avec vitesses: {n_galaxies} galaxies...")
         
-        # 1. Générer le champ de densité avec CAMB
         grid_size = 128
         density_field, k_vectors = self._generate_density_field_with_gradients(grid_size, box_size)
-        
-        # 2. Appliquer le biais
         biased_density = self._apply_galaxy_bias(density_field, bias)
-        
-        # 3. Échantillonner les positions
         positions = self._sample_positions_from_density(biased_density, n_galaxies, box_size)
-        
-        # 4. Calculer les vitesses propres
-        velocities = self._compute_peculiar_velocities(positions, density_field, 
-                                                     box_size, sigma_v, bias)
+        velocities = self._compute_peculiar_velocities(positions, density_field, box_size, sigma_v, bias)
         
         print(f"✅ Catalogue généré: {len(positions)} galaxies")
         print(f"   - Biais: {bias}, σ_v: {sigma_v} km/s")
@@ -93,7 +84,7 @@ class RedshiftSpaceValidator:
     
     def _apply_galaxy_bias(self, density_field, bias):
         """Applique le biais des galaxies"""
-        return bias * density_field + 0.2 * bias * density_field**2
+        return np.maximum(bias * density_field + 0.2 * bias * density_field**2, 0)
     
     def _sample_positions_from_density(self, density_field, n_galaxies, box_size):
         """Échantillonne les positions selon la densité"""
@@ -143,7 +134,8 @@ class RedshiftSpaceValidator:
         """Modèle de Kaiser pour ξ(s)"""
         beta = self.Omega_m**0.55 / beta
         kaiser_factor = 1 + (2/3) * beta + (1/5) * beta**2
-        return xi_real * kaiser_factor
+        finger_of_god = np.exp(-(r_values/5.0)**2)
+        return xi_real * kaiser_factor * finger_of_god
     
     def compute_correlation_function(self, positions, r_bins, box_size, space='real'):
         """Calcule ξ(r) ou ξ(s) avec estimateur Landy-Szalay"""
@@ -200,7 +192,6 @@ class CosmicDNALeapfrogValidator(RedshiftSpaceValidator):
         cell_size = box_size / 128
         
         for step in range(n_steps):
-            # Demi-pas pour les vitesses
             accel = np.zeros_like(positions)
             for i in range(len(positions)):
                 for j in range(i + 1, len(positions)):
@@ -210,11 +201,8 @@ class CosmicDNALeapfrogValidator(RedshiftSpaceValidator):
                         accel[i] += alpha * r_vec / (r**3 + 1e-3)
                         accel[j] -= alpha * r_vec / (r**3 + 1e-3)
             velocities += 0.5 * dt * accel
-            
-            # Pas complet pour les positions
             positions += dt * velocities
             
-            # Symétrie, émergence, duplication, variation, brisure, cyclicité
             positions += beta * np.random.normal(0, 0.1, positions.shape) * dt
             for i, pos in enumerate(positions):
                 cell_x = int(pos[0] / cell_size) % 128
@@ -243,7 +231,6 @@ class CosmicDNALeapfrogValidator(RedshiftSpaceValidator):
             phase = 2 * np.pi * step * dt
             positions += c * np.sin(phase) * np.random.normal(0, 0.5, positions.shape) * dt
             
-            # Second demi-pas pour les vitesses
             accel = np.zeros_like(positions)
             for i in range(len(positions)):
                 for j in range(i + 1, len(positions)):
@@ -300,7 +287,7 @@ class CosmicDNAMCMCValidator(CosmicDNALeapfrogValidator):
         pos = np.random.uniform(1e-17, 1e-16, (n_walkers, ndim))
         sampler = emcee.EnsembleSampler(n_walkers, ndim, log_posterior, 
                                        args=(positions, velocities, r_bins, box_size))
-        sampler.run_mcmc(pos, n_steps, progress=True)
+        sampler.run_mcmc(pos, n_steps, progress=False)
         
         samples = sampler.get_chain(discard=burn_in, flat=True)
         best_params = np.median(samples, axis=0)
@@ -310,6 +297,20 @@ class CosmicDNAMCMCValidator(CosmicDNALeapfrogValidator):
               f"b={best_params[5]:.2e}, c={best_params[6]:.2e}")
         
         return best_params, samples
+    
+    def compute_covariance_matrix(self, positions, r_bins, box_size, n_bootstrap=500):
+        """Calcule la matrice de covariance avec 500 rééchantillons pour une meilleure robustesse"""
+        print(f"🔄 Calcul matrice de covariance ({n_bootstrap} rééchantillons)...")
+        xi_bootstrap = []
+        for i in range(n_bootstrap):
+            indices = np.random.choice(len(positions), len(positions), replace=True)
+            r_centers, xi_boot, _ = self.compute_correlation_function(positions[indices], r_bins, box_size, 'redshift')
+            interp_func = interp1d(r_centers, xi_boot, bounds_error=False, fill_value=0.0)
+            xi_bootstrap.append(interp_func(self.sdss_s))
+            if i % 100 == 0:
+                print(f"   ✅ {i}/{n_bootstrap} bootstrap réussis")
+        covariance = np.cov(np.array(xi_bootstrap).T) + np.eye(len(self.sdss_s)) * 1e-6
+        return covariance
     
     def compute_clustering_metrics(self, positions, eps=5.0, min_samples=10):
         """Calcule le clustering avec DBSCAN"""
@@ -331,20 +332,6 @@ class CosmicDNAMCMCValidator(CosmicDNALeapfrogValidator):
         log_scales = np.log(1/scales)
         slope, _, _, _ = stats.linregress(log_scales, log_counts)
         return slope
-    
-    def compute_covariance_matrix(self, positions, r_bins, box_size, n_bootstrap=100):
-        """Calcule la matrice de covariance"""
-        print(f"🔄 Calcul matrice de covariance ({n_bootstrap} rééchantillons)...")
-        xi_bootstrap = []
-        for i in range(n_bootstrap):
-            indices = np.random.choice(len(positions), len(positions), replace=True)
-            r_centers, xi_boot, _ = self.compute_correlation_function(positions[indices], r_bins, box_size, 'redshift')
-            interp_func = interp1d(r_centers, xi_boot, bounds_error=False, fill_value=0.0)
-            xi_bootstrap.append(interp_func(self.sdss_s))
-            if i % 25 == 0:
-                print(f"   ✅ {i}/{n_bootstrap} bootstrap réussis")
-        covariance = np.cov(np.array(xi_bootstrap).T) + np.eye(len(self.sdss_s)) * 1e-6
-        return covariance
     
     def validate_against_sdss(self, r_calc, xi_calc, covariance=None):
         """Validation statistique contre SDSS"""
@@ -427,6 +414,30 @@ class CosmicDNAIllustrisValidator(CosmicDNAMCMCValidator):
                 'fractal_dimension': fractal_dim
             }
         
+        print("\n🔍 Optimisation MCMC...")
+        best_params, mcmc_samples = self.optimize_coefficients_mcmc(positions, velocities, r_bins, box_size)
+        pos_mcmc, vel_mcmc = self.evolve_positions_leapfrog(
+            positions, velocities, box_size,
+            alpha=best_params[0], beta=best_params[1], gamma=best_params[2],
+            delta=best_params[3], nu=best_params[4], b=best_params[5], c=best_params[6]
+        )
+        redshift_pos_mcmc = self.apply_redshift_space_distortions(pos_mcmc, vel_mcmc)
+        r_redshift_mcmc, xi_redshift_mcmc, _ = self.compute_correlation_function(redshift_pos_mcmc, r_bins, box_size, 'redshift')
+        covariance_mcmc = self.compute_covariance_matrix(redshift_pos_mcmc, r_bins, box_size)
+        validation_mcmc = self.validate_against_sdss(r_redshift_mcmc, xi_redshift_mcmc, covariance_mcmc)
+        k_centers_mcmc, Pk_mcmc = self.compute_power_spectrum(redshift_pos_mcmc, box_size)
+        clustering_mcmc = self.compute_clustering_metrics(redshift_pos_mcmc)
+        fractal_dim_mcmc = self.compute_fractal_dimension(redshift_pos_mcmc, box_size)
+        
+        results['MCMC'] = {
+            'positions': redshift_pos_mcmc,
+            'velocities': vel_mcmc,
+            'redshift_space': {'r': r_redshift_mcmc, 'xi': xi_redshift_mcmc, 'validation': validation_mcmc},
+            'power_spectrum': {'k': k_centers_mcmc, 'Pk': Pk_mcmc},
+            'clustering': clustering_mcmc,
+            'fractal_dimension': fractal_dim_mcmc
+        }
+        
         print("\n🔍 Comparaison avec IllustrisTNG...")
         illustris_r, illustris_xi, illustris_clusters, illustris_fractal = self.load_illustris_snapshot('./TNG100/output')
         results['illustris'] = {
@@ -434,7 +445,7 @@ class CosmicDNAIllustrisValidator(CosmicDNAMCMCValidator):
             'fractal_dimension': illustris_fractal
         }
         
-        return results
+        return results, best_params, mcmc_samples
 
 class CosmicDNAMetricsValidator(CosmicDNAIllustrisValidator):
     """
@@ -456,11 +467,11 @@ class CosmicDNAMetricsValidator(CosmicDNAIllustrisValidator):
     def comprehensive_validation(self, positions, velocities, r_bins, box_size, 
                                bias=1.8, regimes=None):
         """Validation complète avec métriques supplémentaires"""
-        results = super().comprehensive_validation(positions, velocities, r_bins, box_size, bias, regimes)
+        results, best_params, mcmc_samples = super().comprehensive_validation(positions, velocities, r_bins, box_size, bias, regimes)
         density_field, _ = self._generate_density_field_with_gradients(128, box_size)
         for regime_name, data in results.items():
             if regime_name == 'illustris':
                 continue
             data['void_cluster_ratio'] = self.compute_void_cluster_ratio(density_field)
             data['periodicity'] = self.compute_periodicity(data['positions'])
-        return results
+        return results, best_params, mcmc_samples
